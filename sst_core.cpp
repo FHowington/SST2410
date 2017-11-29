@@ -33,7 +33,7 @@ int in_int = 0;
 
 struct node{
 int remaining_cycles;
-int regnum;
+int memloc;
 int iready;
 int jready;
 int executing;
@@ -63,6 +63,12 @@ nodep beginning_of_mul;
 nodep end_of_mul;
 int mul_empty = 1;
 int using_mul = 0;
+
+nodep beginning_of_ls;
+int ls_empty = 1;
+int using_ls = 0;
+int to_dec_ls = 0;
+
 
 core::core(ComponentId_t id, Params& params):
 Component(id)
@@ -179,9 +185,17 @@ std::ifstream file(program_file);
     std::string str;
     while (std::getline(file, str))
     {
-			if(str.front() != '#')
-				programArray[instr_count++] = (int)strtol(str.c_str(), NULL, 16);
+			if(str.front() != '#'){
+				if(str.length() > 5){
+					programArray[instr_count] = (int)strtol(str.substr(0,4).c_str(), NULL, 16);
+					//printf("%d\n",programArray[instr_count]);
+					data_memory[instr_count++] = (int)strtol(str.substr(5,8).c_str(), NULL, 16);
+					//printf("%d\n",data_memory[instr_count-1]);
+				}
+				else
+					programArray[instr_count++] = (int)strtol(str.c_str(), NULL, 16);
     }
+	}
 }
 
 void core::finish()
@@ -215,6 +229,32 @@ printf("Ticked\n");
 
 //std::cout<<"core::tick"<<std::endl;
 cycles++;
+
+
+std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
+{
+	nodep current = beginning_of_ls;
+
+	//Broadcast first to allow those waiting to immediately read
+			current->complete = 1;
+			to_dec_ls++;
+			if(current->destreg > -1 && reg_file[current->destreg] == current)
+				reg_file[current->destreg] = NULL;
+
+			if(current->next != NULL)
+				beginning_of_ls = current->next;
+
+			else{
+				beginning_of_ls = NULL;
+				ls_empty = 1;
+			}
+			printf("Ls broadcasted\n");
+};
+
+
+
+
+
 nodep current = beginning_of_int;
 int to_dec_int = 0;
 
@@ -242,6 +282,78 @@ while(current != NULL){
 			beginning_of_int = NULL;
 			end_of_int = NULL;
 			int_empty = 1;
+		}
+		printf("Something broadcasted\n");
+	}
+	if(current->next == NULL)
+		break;
+	else
+		current = current->next;
+}
+
+current = beginning_of_div;
+int to_dec_div = 0;
+
+//Broadcast first to allow those waiting to immediately read
+while(current != NULL){
+	if(current->remaining_cycles == 0 && current->executing == 1){
+		current->complete = 1;
+		to_dec_div++;
+		if(current->destreg > -1 && reg_file[current->destreg] == current)
+			reg_file[current->destreg] = NULL;
+
+		if(current->prev != NULL && current->next != NULL){
+			current->prev->next = current->next;
+			current->next->prev = current->prev;
+		}
+		else if(current->prev == NULL && current-> next != NULL){
+			beginning_of_div = current->next;
+			beginning_of_div->prev = NULL;
+		}
+		else if(current->prev != NULL && current-> next == NULL){
+			current->prev->next = NULL;
+			end_of_div = current->prev;
+		}
+		else if(current->prev == NULL && current-> next == NULL){
+			beginning_of_div = NULL;
+			end_of_div = NULL;
+			div_empty = 1;
+		}
+		printf("Something broadcasted\n");
+	}
+	if(current->next == NULL)
+		break;
+	else
+		current = current->next;
+}
+
+current = beginning_of_mul;
+int to_dec_mul = 0;
+
+//Broadcast first to allow those waiting to immediately read
+while(current != NULL){
+	if(current->remaining_cycles == 0 && current->executing == 1){
+		current->complete = 1;
+		to_dec_mul++;
+		if(current->destreg > -1 && reg_file[current->destreg] == current)
+			reg_file[current->destreg] = NULL;
+
+		if(current->prev != NULL && current->next != NULL){
+			current->prev->next = current->next;
+			current->next->prev = current->prev;
+		}
+		else if(current->prev == NULL && current-> next != NULL){
+			beginning_of_mul = current->next;
+			beginning_of_mul->prev = NULL;
+		}
+		else if(current->prev != NULL && current-> next == NULL){
+			current->prev->next = NULL;
+			end_of_mul = current->prev;
+		}
+		else if(current->prev == NULL && current-> next == NULL){
+			beginning_of_mul = NULL;
+			end_of_mul = NULL;
+			mul_empty = 1;
 		}
 		printf("Something broadcasted\n");
 	}
@@ -292,44 +404,6 @@ while(current != NULL){
 }
 
 
-
-
-current = beginning_of_div;
-int to_dec_div = 0;
-
-//Broadcast first to allow those waiting to immediately read
-while(current != NULL){
-	if(current->remaining_cycles == 0 && current->executing == 1){
-		current->complete = 1;
-		to_dec_div++;
-		if(current->destreg > -1 && reg_file[current->destreg] == current)
-			reg_file[current->destreg] = NULL;
-
-		if(current->prev != NULL && current->next != NULL){
-			current->prev->next = current->next;
-			current->next->prev = current->prev;
-		}
-		else if(current->prev == NULL && current-> next != NULL){
-			beginning_of_div = current->next;
-			beginning_of_div->prev = NULL;
-		}
-		else if(current->prev != NULL && current-> next == NULL){
-			current->prev->next = NULL;
-			end_of_div = current->prev;
-		}
-		else if(current->prev == NULL && current-> next == NULL){
-			beginning_of_div = NULL;
-			end_of_div = NULL;
-			div_empty = 1;
-		}
-		printf("Something broadcasted\n");
-	}
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
-}
-
 current = beginning_of_div;
 
 while(current != NULL){
@@ -364,46 +438,6 @@ while(current != NULL){
 		printf("Something executed one cycle\n");
 	}
 
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
-}
-
-
-
-
-
-current = beginning_of_mul;
-int to_dec_mul = 0;
-
-//Broadcast first to allow those waiting to immediately read
-while(current != NULL){
-	if(current->remaining_cycles == 0 && current->executing == 1){
-		current->complete = 1;
-		to_dec_mul++;
-		if(current->destreg > -1 && reg_file[current->destreg] == current)
-			reg_file[current->destreg] = NULL;
-
-		if(current->prev != NULL && current->next != NULL){
-			current->prev->next = current->next;
-			current->next->prev = current->prev;
-		}
-		else if(current->prev == NULL && current-> next != NULL){
-			beginning_of_mul = current->next;
-			beginning_of_mul->prev = NULL;
-		}
-		else if(current->prev != NULL && current-> next == NULL){
-			current->prev->next = NULL;
-			end_of_mul = current->prev;
-		}
-		else if(current->prev == NULL && current-> next == NULL){
-			beginning_of_mul = NULL;
-			end_of_mul = NULL;
-			mul_empty = 1;
-		}
-		printf("Something broadcasted\n");
-	}
 	if(current->next == NULL)
 		break;
 	else
@@ -450,6 +484,51 @@ while(current != NULL){
 		current = current->next;
 }
 
+
+current = beginning_of_ls;
+
+while(current != NULL){
+	if(current->iready == 0){
+		if(current->ires->complete == 1){
+			current->iready = 1;
+			current->ires = NULL;
+		}
+	}
+	if(current->jready == 0){
+		if(current->jres->complete == 1){
+			current->jready = 1;
+			current->jres = NULL;
+		}
+	}
+
+	if(current->iready == 1 && current->jready == 1 && current->executing == 0){
+		if(current->read == 1 && using_ls < ls_num && current == beginning_of_ls){
+			current->executing = 1;
+			printf("ls executed one cycle\n");
+			current->remaining_cycles-=1;
+			using_ls++;
+		}
+		else if(current->read == 0){
+			current->read = 1;
+			printf("Read instructions\n");
+		}
+	}
+
+	else if(current->remaining_cycles == 0){
+		memory_latency->read(current->memloc, callback_function);
+		current->executing = 0;
+	}
+
+	else if(current->executing == 1){
+		current->remaining_cycles-=1;
+		printf("ls executed one cycle\n");
+	}
+
+	if(current->next == NULL)
+		break;
+	else
+		current = current->next;
+}
 
 
 
@@ -674,13 +753,12 @@ if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) &&
 
 		//LW
 		else if((instr & 0xF800) == 0x4000){
-			counts[8]++;
 
 					std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
 			{
 				this->busy=false;
 			};
-			memory_latency->read(std::rand()%1000, callback_function);
+			memory_latency->read(1, callback_function);
 			registers[instr>>8 & 0x0007] = data_memory[registers[instr>>5 & 0x0007]];
 			busy=true;
 		}
@@ -693,8 +771,7 @@ if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) &&
 			{
 				this->busy=false;
 			};
-			memory_latency->read(std::rand()%1000, callback_function);
-			data_memory[registers[instr>>5 & 0x0007]] = registers[instr>>2 & 0x0007];
+			memory_latency->read(1, callback_function);
 			busy=true;
 		}
 	}
@@ -706,6 +783,11 @@ if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) &&
 
 	in_mul-=to_dec_mul;
 	using_mul-=to_dec_mul;
+
+	in_ls-=to_dec_ls;
+	using_ls-=to_dec_ls;
+
+	to_dec_ls = 0;
 
 return false;
 }
