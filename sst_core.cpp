@@ -172,8 +172,8 @@ output->output("Initializing.\n");
 }
 
 void core::loadProgram(){
-printf("%d\n",div_num );
-printf("%d\n",div_lat );
+printf("%d\n",ls_res );
+printf("%d\n",ls_lat );
 
 programArray = (uint16_t*)malloc(65536*sizeof(uint16_t));
 data_memory = (int16_t*)malloc(65536*sizeof(int16_t));
@@ -534,7 +534,7 @@ while(current != NULL){
 
 
 
-if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) && (div_empty == 1 || beginning_of_div == NULL) && (mul_empty == 1 || beginning_of_mul == NULL)){
+if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) && (div_empty == 1 || beginning_of_div == NULL) && (mul_empty == 1 || beginning_of_mul == NULL) && (ls_empty == 1 || beginning_of_ls == NULL)){
 	primaryComponentOKToEndSim();
 	unregisterExit();
 	return true;
@@ -754,6 +754,45 @@ if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) &&
 		//LW
 		else if((instr & 0xF800) == 0x4000){
 
+			if(in_ls < ls_res){
+					nodep next = new node;
+					if(beginning_of_ls == NULL){
+						beginning_of_ls = next;
+						next->next = NULL;
+					}
+					else{
+						nodep current = beginning_of_ls;
+						while(current->next != NULL)
+							current = current->next;
+
+						current->next = next;
+						next->next = NULL;
+					}
+
+
+					if(reg_file[instr>>5 & 0x0007] != NULL){
+						next->ires = reg_file[instr>>5 & 0x0007];
+						next->iready = 0;
+					}
+					else{
+						next->iready = 1;
+						}
+					next->jready = 1;
+
+					reg_file[instr>>8 & 0x0007] = next;
+					next->remaining_cycles = ls_lat;
+					next->executing=0;
+					next->complete=0;
+					next->read = 0;
+					next->destreg = (instr>>8 & 0x0007);
+					next->memloc = data_memory[instr_run-1];
+					ls_empty = 0;
+					in_ls++;
+					printf("lw issued\n");
+			}
+				else{
+					instr_run--;
+				}
 					std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
 			{
 				this->busy=false;
