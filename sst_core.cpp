@@ -40,6 +40,7 @@ int executing;
 int complete;
 int destreg;
 int read;
+int operation;
 node *ires;
 node *jres;
 node *next;
@@ -68,6 +69,19 @@ nodep beginning_of_ls;
 int ls_empty = 1;
 int using_ls = 0;
 int to_dec_ls = 0;
+
+int16_t *int_arr;
+int16_t *mul_arr;
+int16_t *div_arr;
+int16_t ls_arr = 0;
+
+
+nodep *int_used_arr;
+nodep *mul_used_arr;
+nodep *div_used_arr;
+
+int stalls = 0;
+
 
 
 core::core(ComponentId_t id, Params& params):
@@ -116,23 +130,23 @@ output->verbose(CALL_INFO, 1, 0, "Configuring cache connection...\n");
 //
 data_memory_link = dynamic_cast<SimpleMem*>(Super::loadModuleWithComponent("memHierarchy.memInterface", this, params));
 SimpleMem::Handler<core> *data_handler=
-		new SimpleMem::Handler<core>(this,&core::memory_callback);
+	new SimpleMem::Handler<core>(this,&core::memory_callback);
 if(!data_memory_link)
 {
-	output->fatal(CALL_INFO, -1, "Error loading memory interface module.\n");
+output->fatal(CALL_INFO, -1, "Error loading memory interface module.\n");
 }
 else
 {
-	output->verbose(CALL_INFO, 1, 0, "Loaded memory interface successfully.\n");
+output->verbose(CALL_INFO, 1, 0, "Loaded memory interface successfully.\n");
 }
 success=data_memory_link->initialize("data_memory_link", data_handler );
 if(success)
 {
-	output->verbose(CALL_INFO, 1, 0, "Loaded memory initialize routine returned successfully.\n");
+output->verbose(CALL_INFO, 1, 0, "Loaded memory initialize routine returned successfully.\n");
 }
 else
 {
-	output->fatal(CALL_INFO, -1, "Failed to initialize interface: %s\n", "memHierarchy.memInterface");
+output->fatal(CALL_INFO, -1, "Failed to initialize interface: %s\n", "memHierarchy.memInterface");
 }
 output->verbose(CALL_INFO, 1, 0, "Configuration of memory interface completed.\n");
 
@@ -154,14 +168,8 @@ Super::registerClock( clock_frequency, new Clock::Handler<core>(this, &core::tic
 //  Simple wrapper to register callbacks
 memory_latency = new SSTMemory(data_memory_link);
 core::loadProgram();
-for(int i=0; i<8; i++){
-	registers[i]=0;
-for(int i=0; i<22; i++){
-	counts[i]=0;
-}
 cycles=0;
 instructions=0;
-}
 }
 
 
@@ -177,46 +185,98 @@ printf("%d\n",ls_lat );
 
 programArray = (uint16_t*)malloc(65536*sizeof(uint16_t));
 data_memory = (int16_t*)malloc(65536*sizeof(int16_t));
-for(int i=0;i<8;i++)
-	reg_file[i]=NULL;
 
+int_arr = (int16_t*)malloc(int_num*sizeof(int16_t));
+for(int i=0;i<int_num;i++)
+int_arr[i]=0;
+div_arr = (int16_t*)malloc(div_num*sizeof(int16_t));
+for(int i=0;i<div_num;i++)
+div_arr[i]=0;
+mul_arr = (int16_t*)malloc(mul_num*sizeof(int16_t));
+for(int i=0;i<mul_num;i++)
+mul_arr[i]=0;
+
+int_used_arr = (nodep*)malloc(int_num*sizeof(nodep));
+for(int i=0;i<int_num;i++)
+	int_used_arr[i]=NULL;
+
+div_used_arr = (nodep*)malloc(div_num*sizeof(nodep));
+for(int i=0;i<div_num;i++)
+	div_used_arr[i]=NULL;
+mul_used_arr = (nodep*)malloc(mul_num*sizeof(nodep));
+for(int i=0;i<mul_num;i++)
+	mul_used_arr[i]=NULL;
+
+for(int i=0;i<8;i++)
+reg_file[i]=NULL;
 
 std::ifstream file(program_file);
-    std::string str;
-    while (std::getline(file, str))
-    {
-			if(str.front() != '#'){
-				if(str.length() > 5){
-					programArray[instr_count] = (int)strtol(str.substr(0,4).c_str(), NULL, 16);
-					//printf("%d\n",programArray[instr_count]);
-					data_memory[instr_count++] = (int)strtol(str.substr(5,8).c_str(), NULL, 16);
-					//printf("%d\n",data_memory[instr_count-1]);
-				}
-				else
-					programArray[instr_count++] = (int)strtol(str.c_str(), NULL, 16);
-    }
-	}
+  std::string str;
+  while (std::getline(file, str))
+  {
+		if(str.front() != '#'){
+			if(str.length() > 5){
+				programArray[instr_count] = (int)strtol(str.substr(0,4).c_str(), NULL, 16);
+				//printf("%d\n",programArray[instr_count]);
+				data_memory[instr_count++] = (int)strtol(str.substr(5,8).c_str(), NULL, 16);
+				//printf("%d\n",data_memory[instr_count-1]);
+			}
+			else
+				programArray[instr_count++] = (int)strtol(str.c_str(), NULL, 16);
+  }
+}
 }
 
 void core::finish()
 {
-/*
+
 FILE * pFile;
 pFile = fopen (output_file.c_str(),"w");
-fprintf(pFile,"{\"registers\":[\n\t{\"r0\":%d,\"r1\":%d,\"r2\":%d,\"r3\":%d,\n\t \"r4\":%d,\"r5\":%d,\"r6\":%d,\"r7\":%d\n\t}],",registers[0],registers[1],registers[2],registers[3],registers[4],registers[5],registers[6],registers[7]);
-fprintf(pFile,"\n\"stats\":[\n\t{\"add\":%d,\"sub\":%d,\"and\":%d,\n",counts[0],counts[1],counts[2]);
-fprintf(pFile,"\t \"nor\":%d,\"div\":%d,\"mul\":%d,\n",counts[3],counts[4],counts[5]);
-fprintf(pFile,"\t \"mod\":%d,\"exp\":%d,\"lw\":%d,\n",counts[6],counts[7],counts[8]);
-fprintf(pFile,"\t \"sw\":%d,\"liz\":%d,\"lis\":%d,\n",counts[9],counts[10],counts[11]);
-fprintf(pFile,"\t \"lui\":%d,\"bp\":%d,\"bn\":%d,\n",counts[12],counts[13],counts[14]);
-fprintf(pFile,"\t \"bx\":%d,\"bz\":%d,\"jr\":%d,\n",counts[15],counts[16],counts[17]);
-fprintf(pFile,"\t \"jalr\":%d,\"j\":%d,\"halt\":%d,\n",counts[18],counts[19],counts[20]);
-fprintf(pFile,"\t \"put\":%d,\n",counts[21]);
-fprintf(pFile,"\t \"instructions\":%d,\n",instructions);
-fprintf(pFile,"\t \"cycles\":%d\n",cycles);
-fprintf(pFile,"\t}]\n}");
+fprintf(pFile,"{\"cycles\":%d,\n",cycles);
+fprintf(pFile,"\"integer\":[");
+
+for(int i=0;i<int_num;i++){
+fprintf(pFile,"{ \"id\" : %d, \"instructions\" : %d}",i,int_arr[i]);
+if(i+1<int_num)
+	fprintf(pFile,",");
+else
+	fprintf(pFile,"],\n");
+}
+
+fprintf(pFile,"\"multiplier\":[");
+
+for(int i=0;i<mul_num;i++){
+fprintf(pFile,"{ \"id\" : %d, \"instructions\" : %d}",i,mul_arr[i]);
+if(i+1<mul_num)
+	fprintf(pFile,",");
+else
+	fprintf(pFile,"],\n");
+}
+
+fprintf(pFile,"\"divider\":[");
+
+for(int i=0;i<div_num;i++){
+fprintf(pFile,"{ \"id\" : %d, \"instructions\" : %d}",i,div_arr[i]);
+if(i+1<div_num)
+	fprintf(pFile,",");
+else
+	fprintf(pFile,"],\n");
+}
+
+fprintf(pFile,"\"ls\":[");
+
+for(int i=0;i<ls_num;i++){
+fprintf(pFile,"{ \"id\" : %d, \"instructions\" : %d}",i,ls_arr);
+if(i+1<ls_num)
+	fprintf(pFile,",");
+else
+	fprintf(pFile,"],\n");
+}
+
+fprintf(pFile,"\"reg reads\" : ,\n");
+fprintf(pFile,"\"stalls\" : %d}",stalls);
+
 fclose(pFile);
-*/
 }
 
 bool core::tick(Cycle_t cycle)
@@ -233,62 +293,58 @@ cycles++;
 
 std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
 {
-	nodep current = beginning_of_ls;
+nodep current = beginning_of_ls;
 
-	//Broadcast first to allow those waiting to immediately read
-			current->complete = 1;
-			to_dec_ls++;
-			if(current->destreg > -1 && reg_file[current->destreg] == current)
-				reg_file[current->destreg] = NULL;
+//Broadcast first to allow those waiting to immediately read
+		current->complete = 1;
+		to_dec_ls++;
+		if(current->destreg > -1 && reg_file[current->destreg] == current)
+			reg_file[current->destreg] = NULL;
 
-			if(current->next != NULL)
-				beginning_of_ls = current->next;
+		if(current->next != NULL)
+			beginning_of_ls = current->next;
 
-			else{
-				beginning_of_ls = NULL;
-				ls_empty = 1;
-			}
-			printf("Ls broadcasted\n");
+		else{
+			beginning_of_ls = NULL;
+			ls_empty = 1;
+		}
+		printf("Ls broadcasted\n");
 };
-
-
-
-
 
 nodep current = beginning_of_int;
 int to_dec_int = 0;
 
 //Broadcast first to allow those waiting to immediately read
 while(current != NULL){
-	if(current->remaining_cycles == 0 && current->executing == 1){
-		current->complete = 1;
-		to_dec_int++;
-		if(current->destreg > -1 && reg_file[current->destreg] == current)
-			reg_file[current->destreg] = NULL;
+if(current->remaining_cycles == 0 && current->executing == 1){
+	current->complete = 1;
+	to_dec_int++;
+	if(current->destreg > -1 && reg_file[current->destreg] == current)
+		reg_file[current->destreg] = NULL;
 
-		if(current->prev != NULL && current->next != NULL){
-			current->prev->next = current->next;
-			current->next->prev = current->prev;
-		}
-		else if(current->prev == NULL && current-> next != NULL){
-			beginning_of_int = current->next;
-			beginning_of_int->prev = NULL;
-		}
-		else if(current->prev != NULL && current-> next == NULL){
-			current->prev->next = NULL;
-			end_of_int = current->prev;
-		}
-		else if(current->prev == NULL && current-> next == NULL){
-			beginning_of_int = NULL;
-			end_of_int = NULL;
-			int_empty = 1;
-		}
-		printf("Something broadcasted\n");
+	if(current->prev != NULL && current->next != NULL){
+		current->prev->next = current->next;
+		current->next->prev = current->prev;
 	}
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
+	else if(current->prev == NULL && current-> next != NULL){
+		beginning_of_int = current->next;
+		beginning_of_int->prev = NULL;
+	}
+	else if(current->prev != NULL && current-> next == NULL){
+		current->prev->next = NULL;
+		end_of_int = current->prev;
+	}
+	else if(current->prev == NULL && current-> next == NULL){
+		beginning_of_int = NULL;
+		end_of_int = NULL;
+		int_empty = 1;
+	}
+	printf("Something broadcasted\n");
+}
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
 }
 
 current = beginning_of_div;
@@ -296,35 +352,35 @@ int to_dec_div = 0;
 
 //Broadcast first to allow those waiting to immediately read
 while(current != NULL){
-	if(current->remaining_cycles == 0 && current->executing == 1){
-		current->complete = 1;
-		to_dec_div++;
-		if(current->destreg > -1 && reg_file[current->destreg] == current)
-			reg_file[current->destreg] = NULL;
+if(current->remaining_cycles == 0 && current->executing == 1){
+	current->complete = 1;
+	to_dec_div++;
+	if(current->destreg > -1 && reg_file[current->destreg] == current)
+		reg_file[current->destreg] = NULL;
 
-		if(current->prev != NULL && current->next != NULL){
-			current->prev->next = current->next;
-			current->next->prev = current->prev;
-		}
-		else if(current->prev == NULL && current-> next != NULL){
-			beginning_of_div = current->next;
-			beginning_of_div->prev = NULL;
-		}
-		else if(current->prev != NULL && current-> next == NULL){
-			current->prev->next = NULL;
-			end_of_div = current->prev;
-		}
-		else if(current->prev == NULL && current-> next == NULL){
-			beginning_of_div = NULL;
-			end_of_div = NULL;
-			div_empty = 1;
-		}
-		printf("Something broadcasted\n");
+	if(current->prev != NULL && current->next != NULL){
+		current->prev->next = current->next;
+		current->next->prev = current->prev;
 	}
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
+	else if(current->prev == NULL && current-> next != NULL){
+		beginning_of_div = current->next;
+		beginning_of_div->prev = NULL;
+	}
+	else if(current->prev != NULL && current-> next == NULL){
+		current->prev->next = NULL;
+		end_of_div = current->prev;
+	}
+	else if(current->prev == NULL && current-> next == NULL){
+		beginning_of_div = NULL;
+		end_of_div = NULL;
+		div_empty = 1;
+	}
+	printf("Something broadcasted\n");
+}
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
 }
 
 current = beginning_of_mul;
@@ -332,501 +388,609 @@ int to_dec_mul = 0;
 
 //Broadcast first to allow those waiting to immediately read
 while(current != NULL){
-	if(current->remaining_cycles == 0 && current->executing == 1){
-		current->complete = 1;
-		to_dec_mul++;
-		if(current->destreg > -1 && reg_file[current->destreg] == current)
-			reg_file[current->destreg] = NULL;
+if(current->remaining_cycles == 0 && current->executing == 1){
+	current->complete = 1;
+	to_dec_mul++;
+	if(current->destreg > -1 && reg_file[current->destreg] == current)
+		reg_file[current->destreg] = NULL;
 
-		if(current->prev != NULL && current->next != NULL){
-			current->prev->next = current->next;
-			current->next->prev = current->prev;
-		}
-		else if(current->prev == NULL && current-> next != NULL){
-			beginning_of_mul = current->next;
-			beginning_of_mul->prev = NULL;
-		}
-		else if(current->prev != NULL && current-> next == NULL){
-			current->prev->next = NULL;
-			end_of_mul = current->prev;
-		}
-		else if(current->prev == NULL && current-> next == NULL){
-			beginning_of_mul = NULL;
-			end_of_mul = NULL;
-			mul_empty = 1;
-		}
-		printf("Something broadcasted\n");
+	if(current->prev != NULL && current->next != NULL){
+		current->prev->next = current->next;
+		current->next->prev = current->prev;
 	}
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
+	else if(current->prev == NULL && current-> next != NULL){
+		beginning_of_mul = current->next;
+		beginning_of_mul->prev = NULL;
+	}
+	else if(current->prev != NULL && current-> next == NULL){
+		current->prev->next = NULL;
+		end_of_mul = current->prev;
+	}
+	else if(current->prev == NULL && current-> next == NULL){
+		beginning_of_mul = NULL;
+		end_of_mul = NULL;
+		mul_empty = 1;
+	}
+	printf("Something broadcasted\n");
+}
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
 }
 
 current = beginning_of_int;
 
 while(current != NULL){
-	if(current->iready == 0){
-		if(current->ires->complete == 1){
-			current->iready = 1;
-			current->ires = NULL;
-		}
+if(current->iready == 0){
+	if(current->ires->complete == 1){
+		current->iready = 1;
+		current->ires = NULL;
 	}
-	if(current->jready == 0){
-		if(current->jres->complete == 1){
-			current->jready = 1;
-			current->jres = NULL;
-		}
+}
+if(current->jready == 0){
+	if(current->jres->complete == 1){
+		current->jready = 1;
+		current->jres = NULL;
 	}
+}
 
-	if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
-		if(current->read == 1 && using_int < int_num){
-			current->executing = 1;
-			printf("Something executed one cycle\n");
-			current->remaining_cycles-=1;
-			using_int++;
+if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
+	if(current->read == 1 && using_int < int_num){
+		for(int i=0;i<int_num;i++){
+			if(int_used_arr[i] == NULL){
+				printf("%d is unused\n",i);
+				int_used_arr[i]=current;
+				int_arr[i]++;
+				break;
+			}
 		}
-		else if(current->read == 0){
-			current->read = 1;
-			printf("Read instructions\n");
-		}
-	}
-
-	else if(current->executing == 1){
-		current->remaining_cycles-=1;
+		current->executing = 1;
 		printf("Something executed one cycle\n");
+		current->remaining_cycles-=1;
+		using_int++;
 	}
+	else if(current->read == 0){
+		current->read = 1;
+		printf("Read instructions\n");
+	}
+}
 
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
+else if(current->executing == 1){
+	current->remaining_cycles-=1;
+	printf("Something executed one cycle\n");
+}
+
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
 }
 
 
 current = beginning_of_div;
 
 while(current != NULL){
-	if(current->iready == 0){
-		if(current->ires->complete == 1){
-			current->iready = 1;
-			current->ires = NULL;
-		}
+if(current->iready == 0){
+	if(current->ires->complete == 1){
+		current->iready = 1;
+		current->ires = NULL;
 	}
-	if(current->jready == 0){
-		if(current->jres->complete == 1){
-			current->jready = 1;
-			current->jres = NULL;
-		}
+}
+if(current->jready == 0){
+	if(current->jres->complete == 1){
+		current->jready = 1;
+		current->jres = NULL;
 	}
+}
 
-	if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
-		if(current->read == 1 && using_div < div_num){
-			current->executing = 1;
-			printf("Something executed one cycle\n");
-			current->remaining_cycles-=1;
-			using_div++;
+if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
+	if(current->read == 1 && using_div < div_num){
+		for(int i=0;i<div_num;i++){
+			if(div_used_arr[i] == NULL){
+				div_used_arr[i]=current;
+				div_arr[i]++;
+				break;
+			}
 		}
-		else if(current->read == 0){
-			current->read = 1;
-			printf("Read instructions\n");
-		}
-	}
-
-	else if(current->executing == 1){
-		current->remaining_cycles-=1;
+		current->executing = 1;
 		printf("Something executed one cycle\n");
+		current->remaining_cycles-=1;
+		using_div++;
 	}
+	else if(current->read == 0){
+		current->read = 1;
+		printf("Read instructions\n");
+	}
+}
 
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
+else if(current->executing == 1){
+	current->remaining_cycles-=1;
+	printf("Something executed one cycle\n");
+}
+
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
 }
 
 current = beginning_of_mul;
 
 while(current != NULL){
-	if(current->iready == 0){
-		if(current->ires->complete == 1){
-			current->iready = 1;
-			current->ires = NULL;
-		}
+if(current->iready == 0){
+	if(current->ires->complete == 1){
+		current->iready = 1;
+		current->ires = NULL;
 	}
-	if(current->jready == 0){
-		if(current->jres->complete == 1){
-			current->jready = 1;
-			current->jres = NULL;
-		}
+}
+if(current->jready == 0){
+	if(current->jres->complete == 1){
+		current->jready = 1;
+		current->jres = NULL;
 	}
-
-	if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
-		if(current->read == 1 && using_mul < mul_num){
-			current->executing = 1;
-			printf("Something executed one cycle\n");
-			current->remaining_cycles-=1;
-			using_mul++;
-		}
-		else if(current->read == 0){
-			current->read = 1;
-			printf("Read instructions\n");
-		}
-	}
-
-	else if(current->executing == 1){
-		current->remaining_cycles-=1;
-		printf("Something executed one cycle\n");
-	}
-
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
 }
 
+if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
+	if(current->read == 1 && using_mul < mul_num){
+		for(int i=0;i<mul_num;i++){
+			if(mul_used_arr[i] == NULL){
+				mul_used_arr[i]=current;
+				mul_arr[i]++;
+				break;
+			}
+		}
+		current->executing = 1;
+		printf("Something executed one cycle\n");
+		current->remaining_cycles-=1;
+		using_mul++;
+	}
+	else if(current->read == 0){
+		current->read = 1;
+		printf("Read instructions\n");
+	}
+}
+
+else if(current->executing == 1){
+	current->remaining_cycles-=1;
+	printf("Something executed one cycle\n");
+}
+
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
+}
 
 current = beginning_of_ls;
 
 while(current != NULL){
-	if(current->iready == 0){
-		if(current->ires->complete == 1){
-			current->iready = 1;
-			current->ires = NULL;
-		}
+if(current->iready == 0){
+	if(current->ires->complete == 1){
+		current->iready = 1;
+		current->ires = NULL;
 	}
-	if(current->jready == 0){
-		if(current->jres->complete == 1){
-			current->jready = 1;
-			current->jres = NULL;
-		}
+}
+if(current->jready == 0){
+	if(current->jres->complete == 1){
+		current->jready = 1;
+		current->jres = NULL;
 	}
-
-	if(current->iready == 1 && current->jready == 1 && current->executing == 0){
-		if(current->read == 1 && using_ls < ls_num && current == beginning_of_ls){
-			current->executing = 1;
-			printf("ls executed one cycle\n");
-			current->remaining_cycles-=1;
-			using_ls++;
-		}
-		else if(current->read == 0){
-			current->read = 1;
-			printf("Read instructions\n");
-		}
-	}
-
-	else if(current->remaining_cycles == 0){
-		memory_latency->read(current->memloc, callback_function);
-		current->executing = 0;
-	}
-
-	else if(current->executing == 1){
-		current->remaining_cycles-=1;
-		printf("ls executed one cycle\n");
-	}
-
-	if(current->next == NULL)
-		break;
-	else
-		current = current->next;
 }
 
+if(current->iready == 1 && current->jready == 1 && current->executing == 0){
+	if(current->read == 1 && using_ls < ls_num && current == beginning_of_ls){
+		ls_arr++;
+		current->executing = 1;
+		printf("ls executed one cycle\n");
+		current->remaining_cycles-=1;
+		using_ls++;
+	}
+	else if(current->read == 0){
+		current->read = 1;
+		printf("Read instructions\n");
+	}
+}
 
+else if(current->remaining_cycles == 0){
+	if(current->operation == 0)
+	memory_latency->read(current->memloc, callback_function);
+	else
+	memory_latency->write(current->memloc, callback_function);
 
+	current->executing = 0;
+}
+
+else if(current->executing == 1){
+	current->remaining_cycles-=1;
+	printf("ls executed one cycle\n");
+}
+
+if(current->next == NULL)
+	break;
+else
+	current = current->next;
+}
 
 
 if((instr_run == instr_count) && (int_empty == 1 || beginning_of_int == NULL) && (div_empty == 1 || beginning_of_div == NULL) && (mul_empty == 1 || beginning_of_mul == NULL) && (ls_empty == 1 || beginning_of_ls == NULL)){
-	primaryComponentOKToEndSim();
-	unregisterExit();
-	return true;
+primaryComponentOKToEndSim();
+unregisterExit();
+return true;
 }
 
-	if(instr_run<instr_count){
-		instructions++;
-		uint16_t instr = programArray[instr_run++];
+if(instr_run<instr_count){
+	uint16_t instr = programArray[instr_run++];
 
-		//add/sub/and/nor
-		if((instr & 0xF800) == 0x0000 || (instr & 0xF800) == 0x0800 || (instr & 0xF800) == 0x1000 || (instr & 0xF800) == 0x1800){
-			if(in_int < int_res){
-					nodep next = new node;
-					if(beginning_of_int == NULL){
-						beginning_of_int = next;
-						end_of_int = next;
-						next->next = NULL;
-						next->prev = NULL;
-					}
-					else{
-						end_of_int->next = next;
-						next->prev = end_of_int;
-						next->next = NULL;
-						end_of_int = next;
-					}
-					if(reg_file[instr>>5 & 0x0007] != NULL){
-						next->ires = reg_file[instr>>5 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->iready = 1;
-						}
-					if(reg_file[instr>>2 & 0x0007] != NULL){
-						next->jres = reg_file[instr>>2 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->jready = 1;
-					}
-
-					reg_file[instr>>8 & 0x0007] = next;
-					next->remaining_cycles = int_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = (instr>>8 & 0x0007);
-					int_empty = 0;
-					in_int++;
-					printf("Add/sub/and/nor issued\n");
-			}
-				else{
-					instr_run--;
+	//add/sub/and/nor
+	if((instr & 0xF800) == 0x0000 || (instr & 0xF800) == 0x0800 || (instr & 0xF800) == 0x1000 || (instr & 0xF800) == 0x1800){
+		if(in_int < int_res){
+				nodep next = new node;
+				if(beginning_of_int == NULL){
+					beginning_of_int = next;
+					end_of_int = next;
+					next->next = NULL;
+					next->prev = NULL;
 				}
+				else{
+					end_of_int->next = next;
+					next->prev = end_of_int;
+					next->next = NULL;
+					end_of_int = next;
+				}
+				if(reg_file[instr>>5 & 0x0007] != NULL){
+					next->ires = reg_file[instr>>5 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->iready = 1;
+					}
+				if(reg_file[instr>>2 & 0x0007] != NULL){
+					next->jres = reg_file[instr>>2 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->jready = 1;
+				}
+
+				reg_file[instr>>8 & 0x0007] = next;
+				next->remaining_cycles = int_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = (instr>>8 & 0x0007);
+				int_empty = 0;
+				in_int++;
+				printf("Add/sub/and/nor issued\n");
 		}
+			else{
+				instr_run--;
+				stalls++;
+			}
+	}
 
 //Liz,lis,lui
-		else if((instr & 0xF800) == 0x8000 || (instr & 0xF800) == 0x8800 || (instr & 0xF800) == 0x9000){
-			if(in_int < int_res){
-					nodep next = new node;
-					if(beginning_of_int == NULL){
-						beginning_of_int = next;
-						end_of_int = next;
-						next->next = NULL;
-						next->prev = NULL;
-					}
-					else{
-						end_of_int->next = next;
-						next->prev = end_of_int;
-						next->next = NULL;
-						end_of_int = next;
-					}
-						next->iready = 1;
-						next->jready = 1;
-
-					reg_file[instr>>8 & 0x0007] = next;
-					next->remaining_cycles = int_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = (instr>>8 & 0x0007);
-					int_empty = 0;
-					in_int++;
-					printf("Lis/liz/lui issued\n");
-			}
-				else{
-					instr_run--;
+	else if((instr & 0xF800) == 0x8000 || (instr & 0xF800) == 0x8800 || (instr & 0xF800) == 0x9000){
+		if(in_int < int_res){
+				nodep next = new node;
+				if(beginning_of_int == NULL){
+					beginning_of_int = next;
+					end_of_int = next;
+					next->next = NULL;
+					next->prev = NULL;
 				}
-		}
-
-		//Halt or put
-		else if((instr & 0xF800) == 0x7000 || (instr & 0xF800) == 0x6800){
-			if(in_int < int_res){
-					nodep next = new node;
-					if(beginning_of_int == NULL){
-						beginning_of_int = next;
-						end_of_int = next;
-						next->next = NULL;
-						next->prev = NULL;
-					}
-					else{
-						end_of_int->next = next;
-						next->prev = end_of_int;
-						next->next = NULL;
-						end_of_int = next;
-					}
-						next->iready = 1;
-						next->jready = 1;
-
-					next->remaining_cycles = int_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = -1;
-					int_empty = 0;
-					in_int++;
-					printf("Halt/put issued\n");
-			}
 				else{
-					instr_run--;
+					end_of_int->next = next;
+					next->prev = end_of_int;
+					next->next = NULL;
+					end_of_int = next;
 				}
-		}
-
-		//Div/mod/exp instr
-		else if((instr & 0xF800) == 0x2000 || (instr & 0xF800) == 0x3800 || (instr & 0xF800) == 0x3000){
-			if(in_div < div_res){
-					nodep next = new node;
-					if(beginning_of_div == NULL){
-						beginning_of_div = next;
-						end_of_div = next;
-						next->next = NULL;
-						next->prev = NULL;
-					}
-					else{
-						end_of_div->next = next;
-						next->prev = end_of_div;
-						next->next = NULL;
-						end_of_div = next;
-					}
-
-					if(reg_file[instr>>5 & 0x0007] != NULL){
-						next->ires = reg_file[instr>>5 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->iready = 1;
-						}
-					if(reg_file[instr>>2 & 0x0007] != NULL){
-						next->jres = reg_file[instr>>2 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->jready = 1;
-					}
-
-					reg_file[instr>>8 & 0x0007] = next;
-					next->remaining_cycles = div_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = (instr>>8 & 0x0007);
-					div_empty = 0;
-					in_div++;
-					printf("div/mod/exp issued\n");
-			}
-				else{
-					instr_run--;
-				}
-		}
-
-		//Mult instr
-		else if((instr & 0xF800) == 0x2800){
-			if(in_mul < mul_res){
-					nodep next = new node;
-					if(beginning_of_mul == NULL){
-						beginning_of_mul = next;
-						end_of_mul = next;
-						next->next = NULL;
-						next->prev = NULL;
-					}
-					else{
-						end_of_mul->next = next;
-						next->prev = end_of_mul;
-						next->next = NULL;
-						end_of_mul = next;
-					}
-
-					if(reg_file[instr>>5 & 0x0007] != NULL){
-						next->ires = reg_file[instr>>5 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->iready = 1;
-						}
-					if(reg_file[instr>>2 & 0x0007] != NULL){
-						next->jres = reg_file[instr>>2 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->jready = 1;
-					}
-
-					reg_file[instr>>8 & 0x0007] = next;
-					next->remaining_cycles = mul_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = (instr>>8 & 0x0007);
-					mul_empty = 0;
-					in_mul++;
-					printf("div/mod/exp issued\n");
-			}
-				else{
-					instr_run--;
-				}
-		}
-
-		//LW
-		else if((instr & 0xF800) == 0x4000){
-
-			if(in_ls < ls_res){
-					nodep next = new node;
-					if(beginning_of_ls == NULL){
-						beginning_of_ls = next;
-						next->next = NULL;
-					}
-					else{
-						nodep current = beginning_of_ls;
-						while(current->next != NULL)
-							current = current->next;
-
-						current->next = next;
-						next->next = NULL;
-					}
-
-
-					if(reg_file[instr>>5 & 0x0007] != NULL){
-						next->ires = reg_file[instr>>5 & 0x0007];
-						next->iready = 0;
-					}
-					else{
-						next->iready = 1;
-						}
+					next->iready = 1;
 					next->jready = 1;
 
-					reg_file[instr>>8 & 0x0007] = next;
-					next->remaining_cycles = ls_lat;
-					next->executing=0;
-					next->complete=0;
-					next->read = 0;
-					next->destreg = (instr>>8 & 0x0007);
-					next->memloc = data_memory[instr_run-1];
-					ls_empty = 0;
-					in_ls++;
-					printf("lw issued\n");
+				reg_file[instr>>8 & 0x0007] = next;
+				next->remaining_cycles = int_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = (instr>>8 & 0x0007);
+				int_empty = 0;
+				in_int++;
+				printf("Lis/liz/lui issued\n");
+		}
+			else{
+				instr_run--;
+				stalls++;
 			}
-				else{
-					instr_run--;
-				}
-					std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
-			{
-				this->busy=false;
-			};
-			memory_latency->read(1, callback_function);
-			registers[instr>>8 & 0x0007] = data_memory[registers[instr>>5 & 0x0007]];
-			busy=true;
-		}
-
-		//SW
-		else if((instr & 0xF800) == 0x4800){
-			counts[9]++;
-
-					std::function<void(uarch_t, uarch_t)> callback_function = [this](uarch_t request_id, uarch_t addr)
-			{
-				this->busy=false;
-			};
-			memory_latency->read(1, callback_function);
-			busy=true;
-		}
 	}
-	in_int-=to_dec_int;
-	using_int-=to_dec_int;
 
-	in_div-=to_dec_div;
-	using_div-=to_dec_div;
+	//Halt or put
+	else if((instr & 0xF800) == 0x7000 || (instr & 0xF800) == 0x6800){
+		if(in_int < int_res){
+				nodep next = new node;
+				if(beginning_of_int == NULL){
+					beginning_of_int = next;
+					end_of_int = next;
+					next->next = NULL;
+					next->prev = NULL;
+				}
+				else{
+					end_of_int->next = next;
+					next->prev = end_of_int;
+					next->next = NULL;
+					end_of_int = next;
+				}
+					next->iready = 1;
+					next->jready = 1;
 
-	in_mul-=to_dec_mul;
-	using_mul-=to_dec_mul;
+				next->remaining_cycles = int_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = -1;
+				int_empty = 0;
+				in_int++;
+				printf("Halt/put issued\n");
+		}
+			else{
+				instr_run--;
+				stalls++;
+			}
+	}
 
-	in_ls-=to_dec_ls;
-	using_ls-=to_dec_ls;
+	//Div/mod/exp instr
+	else if((instr & 0xF800) == 0x2000 || (instr & 0xF800) == 0x3800 || (instr & 0xF800) == 0x3000){
+		if(in_div < div_res){
+				nodep next = new node;
+				if(beginning_of_div == NULL){
+					beginning_of_div = next;
+					end_of_div = next;
+					next->next = NULL;
+					next->prev = NULL;
+				}
+				else{
+					end_of_div->next = next;
+					next->prev = end_of_div;
+					next->next = NULL;
+					end_of_div = next;
+				}
 
-	to_dec_ls = 0;
+				if(reg_file[instr>>5 & 0x0007] != NULL){
+					next->ires = reg_file[instr>>5 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->iready = 1;
+					}
+				if(reg_file[instr>>2 & 0x0007] != NULL){
+					next->jres = reg_file[instr>>2 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->jready = 1;
+				}
+
+				reg_file[instr>>8 & 0x0007] = next;
+				next->remaining_cycles = div_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = (instr>>8 & 0x0007);
+				div_empty = 0;
+				in_div++;
+				printf("div/mod/exp issued\n");
+		}
+			else{
+				instr_run--;
+				stalls++;
+			}
+	}
+
+	//Mult instr
+	else if((instr & 0xF800) == 0x2800){
+		if(in_mul < mul_res){
+				nodep next = new node;
+				if(beginning_of_mul == NULL){
+					beginning_of_mul = next;
+					end_of_mul = next;
+					next->next = NULL;
+					next->prev = NULL;
+				}
+				else{
+					end_of_mul->next = next;
+					next->prev = end_of_mul;
+					next->next = NULL;
+					end_of_mul = next;
+				}
+
+				if(reg_file[instr>>5 & 0x0007] != NULL){
+					next->ires = reg_file[instr>>5 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->iready = 1;
+					}
+				if(reg_file[instr>>2 & 0x0007] != NULL){
+					next->jres = reg_file[instr>>2 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->jready = 1;
+				}
+
+				reg_file[instr>>8 & 0x0007] = next;
+				next->remaining_cycles = mul_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = (instr>>8 & 0x0007);
+				mul_empty = 0;
+				in_mul++;
+				printf("div/mod/exp issued\n");
+		}
+			else{
+				instr_run--;
+				stalls++;
+			}
+	}
+
+	//LW
+	else if((instr & 0xF800) == 0x4000){
+
+		if(in_ls < ls_res){
+				nodep next = new node;
+				if(beginning_of_ls == NULL){
+					beginning_of_ls = next;
+					next->next = NULL;
+				}
+				else{
+					nodep current = beginning_of_ls;
+					while(current->next != NULL)
+						current = current->next;
+
+					current->next = next;
+					next->next = NULL;
+				}
+
+
+				if(reg_file[instr>>5 & 0x0007] != NULL){
+					next->ires = reg_file[instr>>5 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->iready = 1;
+					}
+				next->jready = 1;
+
+				reg_file[instr>>8 & 0x0007] = next;
+				next->remaining_cycles = ls_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = (instr>>8 & 0x0007);
+				next->memloc = data_memory[instr_run-1];
+				next->operation = 0;
+				ls_empty = 0;
+				in_ls++;
+				printf("lw issued\n");
+			}
+			else{
+				instr_run--;
+				stalls++;
+			}
+
+	}
+
+	//SW
+	else if((instr & 0xF800) == 0x4800){
+		if(in_ls < ls_res){
+				nodep next = new node;
+				if(beginning_of_ls == NULL){
+					beginning_of_ls = next;
+					next->next = NULL;
+				}
+				else{
+					nodep current = beginning_of_ls;
+					while(current->next != NULL)
+						current = current->next;
+
+					current->next = next;
+					next->next = NULL;
+				}
+
+
+				if(reg_file[instr>>5 & 0x0007] != NULL){
+					next->ires = reg_file[instr>>5 & 0x0007];
+					next->iready = 0;
+				}
+				else{
+					next->iready = 1;
+					}
+				next->jready = 1;
+
+				next->remaining_cycles = ls_lat;
+				next->executing=0;
+				next->complete=0;
+				next->read = 0;
+				next->destreg = -1;
+				next->operation = 1;
+
+				next->memloc = data_memory[instr_run-1];
+				ls_empty = 0;
+				in_ls++;
+				printf("sw issued\n");
+
+		}
+			else{
+				instr_run--;
+				stalls++;
+			}
+	}
+}
+
+//Clean up
+in_int-=to_dec_int;
+using_int-=to_dec_int;
+
+in_div-=to_dec_div;
+using_div-=to_dec_div;
+
+in_mul-=to_dec_mul;
+using_mul-=to_dec_mul;
+
+in_ls-=to_dec_ls;
+using_ls-=to_dec_ls;
+
+to_dec_ls = 0;
+
+current = beginning_of_int;
+while(current != NULL){
+	if(current->complete == 1){
+		for(int i=0;i<int_num;i++){
+			if(int_used_arr[i] == current){
+				int_used_arr[i]=NULL;
+				break;
+			}
+		}
+		current = current->next;
+		delete(current);
+		continue;
+	}
+	current = current->next;
+}
+
+current = beginning_of_mul;
+while(current != NULL){
+	if(current->complete == 1){
+		for(int i=0;i<mul_num;i++){
+			if(mul_used_arr[i] == current){
+				mul_used_arr[i]=NULL;
+				break;
+			}
+		}
+		current = current->next;
+		delete(current);
+		continue;
+	}
+	current = current->next;
+}
+
+current = beginning_of_div;
+while(current != NULL){
+	if(current->complete == 1){
+		for(int i=0;i<div_num;i++){
+			if(div_used_arr[i] == current){
+				div_used_arr[i]=NULL;
+				break;
+			}
+		}
+		current = current->next;
+		delete(current);
+		continue;
+	}
+	current = current->next;
+}
+
 
 return false;
 }
@@ -836,7 +1000,7 @@ void core::memory_callback(SimpleMem::Request *ev)
 {
 if(memory_latency)
 {
-	memory_latency->callback(ev);
+memory_latency->callback(ev);
 }
 }
 
