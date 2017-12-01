@@ -387,12 +387,14 @@ namespace XSim
 			};
 
 			nodep current = beginning_of_int;
-			nodep oldint = beginning_of_int;
+			nodep oldint = NULL;
+			nodep oldintlast = NULL;
 
 			int to_dec_int = 0;
 
 			//Broadcast first to allow those waiting to immediately read
 			while(current != NULL){
+				nodep togo = current->next;
 
 				if(current->remaining_cycles == 0 && current->executing == 1){
 					current->complete = 1;
@@ -401,7 +403,6 @@ namespace XSim
 					reg_file[current->destreg] = NULL;
 
 					if(current->prev != NULL && current->next != NULL){
-
 						current->prev->next = current->next;
 						current->next->prev = current->prev;
 					}
@@ -420,24 +421,34 @@ namespace XSim
 						end_of_int = NULL;
 						int_empty = 1;
 					}
+					if(oldint == NULL){
+						oldint = current;
+						oldintlast = current;
+						current->next = NULL;
+					}
+					else{
+						oldintlast->next = current;
+						oldintlast = current;
+						current->next = NULL;
+					}
 					printf("int broadcasted\n");
 				}
-				else{
-				}
-				if(current->next == NULL)
+				if(togo == NULL)
 				break;
 				else
-				current = current->next;
+				current = togo;
 
 			}
 
 			current = beginning_of_div;
-			nodep olddiv = beginning_of_div;
+			nodep olddiv = NULL;
+			nodep olddivlast = NULL;
 
 			int to_dec_div = 0;
 
 			//Broadcast first to allow those waiting to immediately read
 			while(current != NULL){
+				nodep togo = current->next;
 				if(current->remaining_cycles == 0 && current->executing == 1){
 					current->complete = 1;
 					to_dec_div++;
@@ -461,21 +472,35 @@ namespace XSim
 						end_of_div = NULL;
 						div_empty = 1;
 					}
+
+					if(olddiv == NULL){
+						olddiv = current;
+						olddivlast = current;
+						current->next = NULL;
+					}
+					else{
+						olddivlast->next = current;
+						olddivlast = current;
+						current->next = NULL;
+					}
+
 					printf("div broadcasted\n");
 				}
-				if(current->next == NULL)
+				if(togo == NULL)
 				break;
 				else
-				current = current->next;
+				current = togo;
 			}
 
 			current = beginning_of_mul;
-			nodep oldmul = beginning_of_mul;
+			nodep oldmul = NULL;
+			nodep oldmullast = NULL;
 
 			int to_dec_mul = 0;
 
 			//Broadcast first to allow those waiting to immediately read
 			while(current != NULL){
+				nodep togo = current->next;
 				if(current->remaining_cycles == 0 && current->executing == 1){
 					current->complete = 1;
 					to_dec_mul++;
@@ -499,12 +524,22 @@ namespace XSim
 						end_of_mul = NULL;
 						mul_empty = 1;
 					}
+					if(oldmul == NULL){
+						oldmul = current;
+						oldmullast = current;
+						current->next = NULL;
+					}
+					else{
+						oldmullast->next = current;
+						oldmullast = current;
+						current->next = NULL;
+					}
 					printf("mul broadcasted\n");
 				}
-				if(current->next == NULL)
+				if(togo == NULL)
 				break;
 				else
-				current = current->next;
+				current = togo;
 			}
 
 			current = beginning_of_int;
@@ -532,7 +567,7 @@ namespace XSim
 							}
 						}
 						current->executing = 1;
-						printf("int executed one cycle\n");
+						printf("int executed 1st cycle\n");
 						current->remaining_cycles-=1;
 						using_int++;
 					}
@@ -573,11 +608,15 @@ namespace XSim
 				if(current->iready == 1 && current->jready == 1 && current->executing == 0 ){
 					if(current->read == 1 && using_div < div_num){
 						for(int i=0;i<div_num;i++){
+							int found = 0;
 							if(div_used_arr[i] == NULL){
 								div_used_arr[i]=current;
 								div_arr[i]++;
+								found = 1;
 								break;
 							}
+							if(found == 0)
+							printf("NOT FOUND\n");
 						}
 						current->executing = 1;
 						printf("div executed one cycle\n");
@@ -760,7 +799,7 @@ namespace XSim
 				}
 
 				//Liz,lis,lui
-				else if((instr & 0xF800) == 0x8000 || (instr & 0xF800) == 0x8800 || (instr & 0xF800) == 0x9000){
+				else if((instr & 0xF800) == 0x8000 || (instr & 0xF800) == 0x8800){
 					if(in_int < int_res){
 						nodep next = new node;
 						if(beginning_of_int == NULL){
@@ -794,8 +833,52 @@ namespace XSim
 					}
 				}
 
-				//Halt or put
-				else if((instr & 0xF800) == 0x7000 || (instr & 0xF800) == 0x6800){
+				//lui
+				else if((instr & 0xF800) == 0x9000){
+					if(in_int < int_res){
+						nodep next = new node;
+						if(beginning_of_int == NULL){
+							beginning_of_int = next;
+							end_of_int = next;
+							next->next = NULL;
+							next->prev = NULL;
+						}
+						else{
+							end_of_int->next = next;
+							next->prev = end_of_int;
+							next->next = NULL;
+							end_of_int = next;
+						}
+						if(reg_file[instr>>8 & 0x0007] != NULL){
+							next->ires = reg_file[instr>>8 & 0x0007];
+							next->iready = 0;
+						}
+						else{
+							next->iready = 1;
+							regread++;
+						}
+						next->jready = 1;
+
+						reg_file[instr>>8 & 0x0007] = next;
+						next->remaining_cycles = int_lat;
+						next->executing=0;
+						next->complete=0;
+						next->read = 0;
+						next->destreg = (instr>>8 & 0x0007);
+						int_empty = 0;
+						in_int++;
+						printf("Lis/liz/lui issued\n");
+					}
+					else{
+						instr_run--;
+						stalls++;
+					}
+				}
+
+
+
+				//Halt
+				else if((instr & 0xF800) == 0x6800){
 					if(in_int < int_res){
 						nodep next = new node;
 						if(beginning_of_int == NULL){
@@ -820,7 +903,51 @@ namespace XSim
 						next->destreg = -1;
 						int_empty = 0;
 						in_int++;
-						printf("Halt/put issued\n");
+						printf("Halt issued\n");
+					}
+					else{
+						instr_run--;
+						stalls++;
+					}
+				}
+
+
+				//Put
+				else if((instr & 0xF800) == 0x7000){
+					if(in_int < int_res){
+						nodep next = new node;
+						if(beginning_of_int == NULL){
+							beginning_of_int = next;
+							end_of_int = next;
+							next->next = NULL;
+							next->prev = NULL;
+						}
+						else{
+							end_of_int->next = next;
+							next->prev = end_of_int;
+							next->next = NULL;
+							end_of_int = next;
+						}
+
+						if(reg_file[instr>>5 & 0x0007] != NULL){
+							next->ires = reg_file[instr>>5 & 0x0007];
+							next->iready = 0;
+						}
+						else{
+							next->iready = 1;
+							regread++;
+						}
+
+						next->jready = 1;
+
+						next->remaining_cycles = int_lat;
+						next->executing=0;
+						next->complete=0;
+						next->read = 0;
+						next->destreg = -1;
+						int_empty = 0;
+						in_int++;
+						printf("put issued\n");
 					}
 					else{
 						instr_run--;
@@ -920,7 +1047,7 @@ namespace XSim
 						next->destreg = (instr>>8 & 0x0007);
 						mul_empty = 0;
 						in_mul++;
-						printf("div/mod/exp issued\n");
+						printf("mul issued\n");
 					}
 					else{
 						instr_run--;
@@ -1032,6 +1159,7 @@ namespace XSim
 				}
 			}
 
+
 			//Clean up
 			in_int-=to_dec_int;
 			using_int-=to_dec_int;
@@ -1047,8 +1175,8 @@ namespace XSim
 
 			to_dec_ls = 0;
 
-
 			current = oldint;
+
 			while(current != NULL){
 				if(current->complete == 1){
 					for(int i=0;i<int_num;i++){
@@ -1062,7 +1190,10 @@ namespace XSim
 					current = temp;
 					continue;
 				}
-				current = current->next;
+				if(current->next != NULL)
+					current = current->next;
+					else
+					break;
 			}
 
 			current = oldmul;
@@ -1098,8 +1229,6 @@ namespace XSim
 				}
 				current = current->next;
 			}
-
-
 			return false;
 		}
 
